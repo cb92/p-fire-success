@@ -1,8 +1,12 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
 from copy import deepcopy
 import pandas as pd
+from pathlib import Path
+import numpy as np
+
+DATA_DIR = Path("data")
 
 # Tax bracket information
 STD_DED = {True: 32_000, False: 16_100}
@@ -13,6 +17,26 @@ BRACKETS = {
 LTCG_BREAKS = {True: (98_900, 613_700), False: (49_450, 545_500)}   # 0%->15% and 15%->20% thresholds
 SS_WAGE_BASE = 184_500                                              # per earner, indexed by inflation
 
+# ---------- Data Fucntions ----------
+def _annual(fname):
+    """Load a Date,Value csv (dates like 12/31/1933) as a Series indexed by year (last observation per year)."""
+    df = pd.read_csv(DATA_DIR / fname)
+    years = pd.to_datetime(df["Date"], format="%m/%d/%Y").dt.year
+    s = pd.Series(df["Value"].to_numpy(), index=years.to_numpy())
+    return s.groupby(level=0).last().sort_index()
+
+
+def hist_apprec():
+    return 1 + _annual("house_price_index.csv").to_numpy() / 100
+
+
+def hist_macro():
+    """(inflation factor, market growth factor) pairs, by year present in all three files."""
+    infl = _annual("inflation_rates_annualpctchange.csv")
+    dow, sp = _annual("dow_annual_return.csv"), _annual("sp500_annual_return.csv")
+    yrs = infl.index.intersection(dow.index).intersection(sp.index)
+    return np.column_stack([1 + infl[yrs].to_numpy() / 100,
+                            1 + ((dow[yrs] + sp[yrs]) / 2).to_numpy() / 100])
 # ---------- Taxes ----------
 def bracket_tax(ti, joint):
     b = BRACKETS[joint]
@@ -187,10 +211,19 @@ class Home:
     mortgage: Mortgage
     annual_cost: float                 # mortgage payment + upkeep, in base_year dollars
     base_year: int
+    upkeep: float = field(init=False)
+    last_year: int = field(init=False)
+
+    def __post_init__(self):
+        self.upkeep = self.annual_cost - self.mortgage.payment
+        self.last_year = self.base_year
 
     def cost(self, year, inflation):
-        upkeep = (self.annual_cost - self.mortgage.payment) * inflation ** (year - self.base_year)
-        return upkeep + (0 if self.mortgage.paid_off(year) else self.mortgage.payment)
+
+        if year > self.last_year:
+            self.upkeep *= inflation
+            self.last_year = year
+        return self.upkeep + (0 if self.mortgage.paid_off(year) else self.mortgage.payment)
 
     def sale_proceeds(self, year, tx, has_spouse):
         """Net proceeds; records any taxable gain in `tx`."""
@@ -242,11 +275,6 @@ class SimulationRun:
     state_tax: float = 0.05                             # flat state rate
     penalty: float = 0.10                               # early-withdrawal penalty
 
-    # Economy
-    growth: float = 1.10
-    inflation: float = 1.04
-    home_apprec: float = 1.04
-
     # Optional events (None to disable)
     home_sale_year: Optional[int] = 2028
     new_home_year: Optional[int] = 2035
@@ -259,10 +287,22 @@ class SimulationRun:
             assert self.new_home_year > self.home_sale_year
         # TODO: age bounds and contribution feasibility checks go here
     
-    def run(self):
-        """Simulate year by year. Returns a list of per-year result dicts."""
+    def run(self, seed = None):
+        """Simulate year by year with bootstrapped inflation, house appreciation and market growth.
+        Returns a list of per-year result dicts."""
+        rng = np.random.default_rng(seed)
         pf, home = deepcopy(self.portfolio), deepcopy(self.home)
         results = []
+        T = self.age_end - self.age_start + 1
+
+        # One sampled factor per simulated year; factor[t] is the change during year t
+        macro = hist_macro()
+        pick = rng.integers(len(macro), size=T)           # one shared year per simulated year
+        infl_f, growth = macro[pick, 0], macro[pick, 1]
+        apprec = rng.choice(hist_apprec(), T)
+        cum_infl = np.r_[1.0, np.cumprod(infl_f)[:-1]]       # price level at start of year t (1.0 at t=0)
+        cum_apprec = np.r_[1.0, np.cumprod(apprec)[:-1]]
+        sim_failed = False
 
         def balances(prefix):
             return {f"{prefix}_brokerage": pf.brokerage.balance,
@@ -278,10 +318,12 @@ class SimulationRun:
 
         for t in range(self.age_end - self.age_start + 1):
             year, age = self.start_year + t, self.age_start + t
-            infl = self.inflation ** t
+            infl = cum_infl[t]
             cg = self.contrib_annual_increase ** t
             working = age <= self.age_retire
-            row = {"year": year, "age": age, **balances("start")}
+            row = {"year": year, "age": age, **balances("start"),
+                   "inflation": float(infl_f[t]), "cum_inflation": float(infl),
+                   "home_apprec": float(apprec[t]), "market_growth": float(growth[t])}
 
             # Income
             wages = (self.pre_ret_income if working else self.post_ret_income if age <= self.age_end_pt else 0) * infl
@@ -296,7 +338,7 @@ class SimulationRun:
             post_tax = tx.ordinary - tx.total() - fica - (self.roth_contrib * cg if working else 0)
 
             # Net income -> brokerage surplus or drawdown
-            housing = home.cost(year, self.inflation) if home else self.housing_rent * infl
+            housing = home.cost(year, infl_f[max(t - 1, 0)]) if home else self.housing_rent * infl
             net = post_tax - housing - (self.exp_working if working else self.exp_retired) * infl
             row.update(pre_tax_income=tx.ordinary, post_tax_income=post_tax, net_income=net, failed=False, unmet=0.0)
 
@@ -306,13 +348,14 @@ class SimulationRun:
                 unmet = pf.withdraw(-net, age, tx, self.penalty)
                 if unmet > 1:
                     row.update(failed=True, unmet=unmet, **balances("end"), **house_status(year))
+                    sim_failed = True
                     results.append(row)
                     break
 
             # Growth
-            pf.grow(self.growth)
+            pf.grow(growth[t])
             if home:
-                home.value *= self.home_apprec
+                home.value *= apprec[t]
 
             # One-time house events (end-of-year values, as before)
             if home and year == self.home_sale_year:
@@ -320,7 +363,7 @@ class SimulationRun:
                 home = None
 
             if home is None and year == self.new_home_year and pf.brokerage.balance > 0:
-                cost = self.new_home_cost * self.home_apprec ** t
+                cost = self.new_home_cost * cum_apprec[t]
                 down = 0.2 * cost
                 down -= pf.brokerage.sell(down, tx)              # down payment = what the brokerage could raise
                 mortgage = Mortgage(cost - down, self.new_mortgage_rate, self.new_mortgage_years, year)
@@ -329,11 +372,20 @@ class SimulationRun:
             row.update(**balances("end"), **house_status(year))
             results.append(row)
 
-        return results
+        return results, sim_failed
 
-sim = SimulationRun(
-    Portfolio(Roth(900_000, 500_000), Traditional(100_000), Brokerage(700_000, 500_000)) ,
-    Home(1_900_000, 1_600_000, Mortgage(750_000, 0.05375, 30, 2023), 90_000, date.today().year)
-)
+sim_results = []
+for i in range(100):
+    sim = SimulationRun(
+        Portfolio(Roth(900_000, 500_000), Traditional(100_000), Brokerage(700_000, 500_000)) ,
+        Home(1_900_000, 1_600_000, Mortgage(750_000, 0.05375, 30, 2023), 90_000, date.today().year)
+    )
+    res_df, failed = sim.run()
+    sim_results.append({
+        "num": i,
+        "df": res_df,
+        "sim_failed": failed
+    })
 
-print(pd.DataFrame(sim.run()))
+print(pd.DataFrame(sim_results)[["num", "sim_failed"]])
+print(pd.DataFrame(sim_results)[["num", "sim_failed"]].mean())
