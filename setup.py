@@ -5,6 +5,8 @@ from copy import deepcopy
 import pandas as pd
 from pathlib import Path
 import numpy as np
+import streamlit as st
+import altair as alt
 
 DATA_DIR = Path("data")
 
@@ -17,7 +19,7 @@ BRACKETS = {
 LTCG_BREAKS = {True: (98_900, 613_700), False: (49_450, 545_500)}   # 0%->15% and 15%->20% thresholds
 SS_WAGE_BASE = 184_500                                              # per earner, indexed by inflation
 
-# ---------- Data Fucntions ----------
+# ---------- Data Functions ----------
 def _annual(fname):
     """Load a Date,Value csv (dates like 12/31/1933) as a Series indexed by year (last observation per year)."""
     df = pd.read_csv(DATA_DIR / fname)
@@ -37,7 +39,7 @@ def hist_macro():
     yrs = infl.index.intersection(dow.index).intersection(sp.index)
     return np.column_stack([1 + infl[yrs].to_numpy() / 100,
                             1 + ((dow[yrs] + sp[yrs]) / 2).to_numpy() / 100])
-# ---------- Taxes ----------
+# ---------- Tax Functions + Class ----------
 def bracket_tax(ti, joint):
     b = BRACKETS[joint]
     return sum(max(0, min(ti, b[i + 1][0] if i + 1 < len(b) else float("inf")) - lo) * rate
@@ -92,7 +94,7 @@ def solve_gross(need, net_fn, cap):
     return hi, 0.0
 
 
-# ---------- Mortgage math ----------
+# ---------- Mortgage functions ----------
 def monthly_pmt(principal, rate, num_years, pmts_per_year=12):
     r, n = rate / pmts_per_year, num_years * pmts_per_year
     return principal * r * (1 + r) ** n / ((1 + r) ** n - 1)
@@ -106,7 +108,7 @@ def remaining_balance(principal, rate, num_years, years_since_start, pmts_per_ye
     return principal * (1 + r) ** k - pmt * ((1 + r) ** k - 1) / r
 
 
-# ---------- Accounts ----------
+# ---------- Account classes ----------
 class Account:
     def __init__(self, balance, basis=0):
         self.balance, self.basis = balance, basis
@@ -185,7 +187,7 @@ class Portfolio:
                 f"Traditional {self.trad.balance:,.0f} | Roth {self.roth.balance:,.0f}")
 
 
-# ---------- Housing ----------
+# ---------- Housing classes ----------
 @dataclass
 class Mortgage:
     amount: float
@@ -236,7 +238,7 @@ class Home:
         return price - self.mortgage.balance(year) - tax
 
 
-# ---------- Simulation ----------
+# ---------- Simulation class ----------
 @dataclass
 class SimulationRun:
     portfolio: Portfolio
@@ -284,9 +286,11 @@ class SimulationRun:
 
     def __post_init__(self):
         if self.home_sale_year and self.new_home_year:
-            assert self.new_home_year > self.home_sale_year
-        # TODO: age bounds and contribution feasibility checks go here
-    
+            assert self.new_home_year > self.home_sale_year, "New home purchase year must be after home sale year."
+        assert self.age_retire >= self.age_start, "Retirement age cannot be prior to start age."
+        assert self.age_end >= self.age_retire, "End age cannot be prior to retirement age."
+
+
     def run(self, seed = None):
         """Simulate year by year with bootstrapped inflation, house appreciation and market growth.
         Returns a list of per-year result dicts."""
@@ -374,18 +378,229 @@ class SimulationRun:
 
         return results, sim_failed
 
-sim_results = []
-for i in range(100):
-    sim = SimulationRun(
-        Portfolio(Roth(900_000, 500_000), Traditional(100_000), Brokerage(700_000, 500_000)) ,
-        Home(1_900_000, 1_600_000, Mortgage(750_000, 0.05375, 30, 2023), 90_000, date.today().year)
-    )
-    res_df, failed = sim.run()
-    sim_results.append({
-        "num": i,
-        "df": res_df,
-        "sim_failed": failed
-    })
 
-print(pd.DataFrame(sim_results)[["num", "sim_failed"]])
-print(pd.DataFrame(sim_results)[["num", "sim_failed"]].mean())
+# ---------- Streamlit Interface ----------
+st.title("Monte Carlo Portfolio Simulator")
+
+with st.sidebar:
+    st.header("Simulation Parameters")
+
+    st.subheader("Accounts & Home")
+    roth_bal = st.number_input("Roth Balance ($)", value=900_000, step=10_000, help="Initial Roth IRA/401(k) balance")
+    roth_basis = st.number_input("Roth Basis ($)", value=500_000, step=10_000, help="Initial Roth IRA/401(k) contribution basis")
+    trad_bal = st.number_input("Traditional Balance ($)", value=100_000, step=10_000, help="Initial Traditional IRA/401(k) balance")
+    brok_bal = st.number_input("Brokerage Balance ($)", value=700_000, step=10_000, help="Initial taxable brokerage balance")
+    brok_basis = st.number_input("Brokerage Basis ($)", value=500_000, step=10_000, help="Initial taxable brokerage cost basis")
+    
+    has_home = st.checkbox("Owns Home", value=True, help="Whether you currently own your primary residence")
+    if has_home:
+        home_val = st.number_input("Home Value ($)", value=1_900_000, step=25_000, help="Current home market value")
+        home_basis = st.number_input("Home Basis ($)", value=1_600_000, step=25_000, help="Purchase price/cost basis")
+        mort_amt = st.number_input("Mortgage Amount ($)", value=750_000, step=10_000, help="Total original mortgage principal") 
+        mort_rate = st.number_input("Mortgage Rate", value=0.05375, step=0.001, format="%.5f", help="Annual interest rate decimal")
+        mort_years = st.number_input("Mortgage Term (Years)", value=30, min_value=1, max_value=50, step=1, help="Original loan term in years")
+        mort_start = st.number_input("Mortgage Start Year", value=2023, step=1, help="Year mortgage began")
+        housing_own = st.number_input("Annual Home Cost ($)", value=90_000, step=5_000, help="Annual payment plus upkeep")
+
+    st.subheader("Timeline & Ages")
+    start_year = date.today().year # = st.number_input("Start Year", value=date.today().year, step=1, help="Base simulation start year") # don't allow user to change this
+    age_start = st.slider("Start Age", 18, 100, 35, help="Starting age of person")
+    age_retire = st.slider("Retire Age", age_start, 100, 45, help="Age when full retirement begins")
+    age_end_pt = st.slider("Part-Time End Age", age_retire, 100, 55, help="Age when part-time income ends")
+    age_ss = st.slider("Social Security Age", 62, 70, 67, help="Age Social Security benefit starts")
+    age_end = st.slider("End Age", age_end_pt, 110, 99, help="Simulation end age")
+
+    st.subheader("Household & Income")
+    has_spouse = st.checkbox("Has Spouse", value=True, help="Check this box if you are planning with a spouse (affects tax treatment)")
+    earners = st.slider("Earners", 1, 2, 1, help="Number of wage earners for Social Security wage base limit")
+    pre_ret_income = st.number_input("Pre-Retirement Income ($)", value=210_000, step=5_000, help="Annual gross earned income")
+    post_ret_income = st.number_input("Post-Retirement Income ($)", value=0, step=5_000, help="Annual gross post-retirement income until part-time end age")
+    ss_income = st.number_input("Social Security Income ($)", value=50_000, step=2_500, help="Annual Social Security payout in base dollars. Check the [SSA Quick Calc](https://www.ssa.gov/OACT/quickcalc/) for an estimate.")
+
+    st.subheader("Contributions & Expenses")
+    pretax_contrib = st.number_input("Pre-tax Contribution ($)", value=0, step=1_000, help="Annual pre-tax 401(k) contribution")
+    roth_contrib = st.number_input("Roth Contribution ($)", value=8_000, step=500, help="Annual Roth IRA contribution")
+    employer_match = st.number_input("Employer Match ($)", value=8_000, step=500, help="Annual employer matching contribution")
+    contrib_annual_increase = st.number_input("Contrib Growth Multiplier", value=1.01, step=0.005, format="%.3f", help="Annual growth factor on contributions")
+    exp_working = st.number_input("Working Non-Housing Expenses ($)", value=100_000, step=5_000, help="Annual living expenses prior to retirement, not including housing")
+    exp_retired = st.number_input("Retired Non-Housing Expenses ($)", value=100_000, step=5_000, help="Annual living expenses during retirement, not including housing")
+    housing_rent = st.number_input("Rent Cost ($)", value=60_000, step=2_500, help="Annual rent when not owning a home")
+
+    st.subheader("Taxes & Events")
+    state_tax = st.number_input("State Tax Rate", value=0.05, step=0.005, format="%.3f", help="Flat state income tax rate")
+    penalty = st.number_input("Early Withdrawal Penalty Rate", value=0.10, step=0.01, help="Penalty on early traditional/Roth withdrawals (10 pct is standard but you can model something else)")
+    
+    enable_events = st.checkbox("Enable Home Real Estate Events", value=True, help="Enable home sale and repurchase events")
+    if enable_events:
+        home_sale_year = st.number_input("Home Sale Year", value=2028, step=1, help="Year current home is sold")
+        new_home_year = st.number_input("New Home Purchase Year", value=2035, step=1, help="Year new home is purchased")
+        new_home_cost = st.number_input("New Home Cost ($)", value=1_300_000, step=50_000, help="New home price estimate in current year dollars")
+        new_mortgage_rate = st.number_input("New Mortgage Rate", value=0.06, step=0.005, help="Interest rate for new mortgage")
+        new_mortgage_years = st.number_input("New Mortgage Term (Years)", value=30, step=1, help="Term of new mortgage")
+    else:
+        home_sale_year, new_home_year = None, None
+        new_home_cost, new_mortgage_rate, new_mortgage_years = 1_300_000, 0.06, 30
+
+    run_button = st.button("Run Simulation", type="primary", use_container_width=True)
+
+if run_button:
+    try:
+        portfolio = Portfolio(Roth(roth_bal, roth_basis), Traditional(trad_bal), Brokerage(brok_bal, brok_basis))
+        home = Home(home_val, home_basis, Mortgage(mort_amt, mort_rate, mort_years, mort_start), housing_own, start_year) if has_home else None
+
+        sim = SimulationRun(
+            portfolio=portfolio, home=home, start_year=start_year, age_start=age_start,
+            age_retire=age_retire, age_end_pt=age_end_pt, age_ss=age_ss, age_end=age_end,
+            has_spouse=has_spouse, earners=earners, pre_ret_income=pre_ret_income,
+            post_ret_income=post_ret_income, ss_income=ss_income, pretax_contrib=pretax_contrib,
+            roth_contrib=roth_contrib, employer_match=employer_match,
+            contrib_annual_increase=contrib_annual_increase, exp_working=exp_working,
+            exp_retired=exp_retired, housing_rent=housing_rent, state_tax=state_tax,
+            penalty=penalty, home_sale_year=home_sale_year, new_home_year=new_home_year,
+            new_home_cost=new_home_cost, new_mortgage_rate=new_mortgage_rate,
+            new_mortgage_years=new_mortgage_years
+        )
+
+        runs = []
+        for i in range(1000):
+            res_df, _ = sim.run()
+            df = pd.DataFrame(res_df)
+            df["end_portfolio_value"] = df["end_brokerage"] + df["end_traditional"] + df["end_roth"]
+            df["run_id"] = f"Run {i + 1}"
+            runs.append(df)
+
+        results_df = pd.concat(runs, ignore_index=True)
+        pivot_df = results_df.pivot(index="year", columns="run_id", values="end_portfolio_value")
+
+        st.subheader("Simulated Portfolio End Value Over Time (1000 Runs)")
+        st.line_chart(pivot_df)
+
+        # Calculate failure year (first year where failed == True) and survival duration per run
+        failure_years = []
+        last_years = []
+        end_values = []
+
+        for df in runs:
+            df["home_equity"] = df["home_value"].fillna(0.0) - df["mortgage_balance"].fillna(0.0)
+            df["debt"] = -df["mortgage_balance"].fillna(0.0)
+
+            failed_rows = df[df["failed"] == True]
+            if not failed_rows.empty:
+                failure_years.append(failed_rows["year"].iloc[0])
+            else:
+                failure_years.append(None)
+            
+            last_years.append(df["year"].max())
+            end_values.append(df["end_portfolio_value"].iloc[-1] if failed_rows.empty else 0.0)
+
+        # Re-concatenate so results_df contains home_equity, debt, and non_roth
+        results_df = pd.concat(runs, ignore_index=True)
+
+        # 1. Big Number: % Chance of Success
+        success_count = sum(1 for f in failure_years if f is None)
+        success_pct = (success_count / len(runs)) * 100
+        st.metric(label="Success Rate (Reached end of plan with > $0)", value=f"{success_pct:.1f}%")
+
+        # 2. Bar Chart: % of time money runs out in year X
+        failed_years_series = pd.Series([y for y in failure_years if y is not None])
+        if not failed_years_series.empty:
+            all_years_seq = range(start_year, start_year + (age_end - age_start + 1))
+            fail_counts_by_year = failed_years_series.value_counts().reindex(all_years_seq, fill_value=0)
+            
+            # Unconditional CDF (% of all runs failed by year X)
+            cdf_series = (fail_counts_by_year.cumsum() / len(runs)) * 100
+            
+            st.subheader("Cumulative Probability of Running Out of Money by Year (%)")
+            st.line_chart(cdf_series)
+        else:
+            st.info("No simulation runs ran out of money before the plan ended.")
+
+        # 3. Portfolio Trajectories (Median and 25th-75th Percentiles based on Ranking)
+        # Rank runs: 1st by end_portfolio_value (descending), 2nd by max year reached (descending)
+        run_rankings = pd.DataFrame({
+            "run_id": [df["run_id"].iloc[0] for df in runs],
+            "end_val": end_values,
+            "max_year": last_years
+        }).sort_values(by=["end_val", "max_year"], ascending=[False, False]).reset_index(drop=True)
+        run_rankings["rank_pct"] = np.linspace(1.0, 0.0, len(run_rankings))
+        median_run_id = run_rankings.iloc[(run_rankings["rank_pct"] - 0.50).abs().argmin()]["run_id"]
+
+        # Prepare aggregate component data across years
+        components = ["home_equity", "debt", "end_roth", "end_traditional", "end_brokerage"]
+        component_labels = {
+            "home_equity": "Home Equity",
+            "debt": "Mortgage Debt",
+            "end_roth": "Roth Balance",
+            "end_traditional": "Non-Roth (Traditional) Balance",
+            "end_brokerage": "Taxable Brokerage Balance"
+        }
+        
+        component_descriptions = {
+            "home_equity": "Difference between estimated home value and remaining mortgage principal.",
+            "debt": "Remaining unpaid principal balance on mortgage (shown as negative).",
+            "end_roth": "Tax-free growth account balance (Roth IRA / Roth 401(k)).",
+            "end_traditional": "Pre-tax account balance (Traditional IRA / 401(k)).",
+            "end_brokerage": "Standard taxable investment brokerage account balance."
+        }
+
+        chart_rows = []
+        for comp in components:
+            comp_pivot = results_df.pivot(index="year", columns="run_id", values=comp).fillna(0.0)
+            
+            median_series = comp_pivot.quantile(0.5, axis=1)
+            p25_series = comp_pivot.quantile(0.25, axis=1)
+            p75_series = comp_pivot.quantile(0.75, axis=1)
+
+
+            for yr in comp_pivot.index:
+                chart_rows.append({
+                    "year": int(yr),
+                    "component_key": comp,
+                    "median": median_series.loc[yr],
+                    "p25": p25_series.loc[yr],
+                    "p75": p75_series.loc[yr]
+                })
+
+        df_altair = pd.DataFrame(chart_rows)
+
+        colors = {
+            "home_equity": "#2ca02c",
+            "debt": "#d62728",
+            "end_roth": "#9467bd",
+            "end_traditional": "#ff7f0e",
+            "end_brokerage": "#1f77b4"
+        }
+
+        for comp in components:
+            title_text = component_labels[comp]
+            desc_text = component_descriptions[comp]
+            
+            comp_df = df_altair[df_altair["component_key"] == comp]
+
+            # Shaded 25th - 75th percentile band
+            band = alt.Chart(comp_df).mark_area(opacity=0.25).encode(
+                x=alt.X("year:O", title="Year"),
+                y=alt.Y("p25:Q", title="Value ($)", axis=alt.Axis(format="$,.0f")),
+                y2="p75:Q",
+                color=alt.value(colors[comp])
+            )
+
+            # Solid median line
+            line = alt.Chart(comp_df).mark_line(strokeWidth=2.5).encode(
+                x=alt.X("year:O", title="Year"),
+                y=alt.Y("median:Q", title="Value ($)"),
+                color=alt.value(colors[comp])
+            )
+
+            chart = (band + line).properties(
+                title=f"{title_text}: Median & 25th–75th Percentile Band",
+                height=280
+            )
+
+            st.markdown(f"#### {title_text}")
+            st.caption(desc_text)
+            st.altair_chart(chart, use_container_width=True)
+
+
+    except Exception as e:
+        st.error(f"Simulation Error: {e}")
