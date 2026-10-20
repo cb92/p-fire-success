@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import date
+from typing import Optional
 from copy import deepcopy
 import pandas as pd
 
@@ -31,22 +32,24 @@ def fed_tax(ordinary, gains, joint, infl):
     return tax * infl
 
 
-                next_threshold = brackets[i + 1][0]
-                income_in_bracket = min(taxable_income, next_threshold) - threshold
-            else:
-                income_in_bracket = taxable_income - threshold
-            tax += income_in_bracket * rate
 @dataclass
+class TaxYear:
+    """Running ordinary income and realized gains for one year, so withdrawals stack."""
+    infl: float
+    ordinary: float = 0.0
     gains: float = 0.0
     has_spouse: bool = True
     state: float = 0.05
 
     def _total(self, o, g):
         return fed_tax(o, g, self.has_spouse, self.infl) + self.state * (o + g)
+
     def total(self):
         return self._total(self.ordinary, self.gains)
 
     def extra(self, d_ord=0.0, d_gains=0.0):
+        """Incremental tax from realizing more income this year."""
+        return self._total(self.ordinary + d_ord, self.gains + d_gains) - self.total()
 
     def realize(self, d_ord=0.0, d_gains=0.0):
         self.ordinary += d_ord
@@ -76,7 +79,6 @@ def remaining_balance(principal, rate, num_years, years_since_start, pmts_per_ye
         return 0
     r, k = rate / pmts_per_year, years_since_start * pmts_per_year
     pmt = monthly_pmt(principal, rate, num_years, pmts_per_year)
-START_YEAR = date.today().year
     return principal * (1 + r) ** k - pmt * ((1 + r) ** k - 1) / r
 
 
@@ -90,12 +92,13 @@ class Account:
         self.basis += amt
 
 
+class Brokerage(Account):
+    def sell(self, need, tx):
+        """Raise `need` after-tax dollars, drawing basis and gains proportionally.
         Returns the amount still unmet."""
-        avail = self.net_available(ltcg_rate)
-        p = min(1, net / avail) if avail > 0 else 1
-        self.balance *= 1 - p
         if self.balance <= 0:
             return need
+        f = max(0, (self.balance - self.basis) / self.balance)          # gain fraction
         g, unmet = solve_gross(need, lambda s: s - tx.extra(d_gains=f * s), self.balance)
         tx.realize(d_gains=f * g)
         self.balance -= g
@@ -111,14 +114,12 @@ class Roth(Account):
             self.balance -= used
             self.basis = min(self.basis, self.balance)
             return need - used
-            self.balance -= need
-            self.basis -= need
+        free = min(need, self.basis)                                   # basis: no tax or penalty
         self.balance -= free
         self.basis -= free
+        need -= free
+        if need <= 0:
             return 0
-        if need < avail:
-            self.balance -= self.basis + (need - self.basis) / k
-            self.basis = 0
         # earnings: ordinary income + penalty
         e, unmet = solve_gross(need, lambda e: e - tx.extra(d_ord=e) - penalty * e,
                                self.balance - self.basis)
@@ -128,7 +129,6 @@ class Roth(Account):
 
 
 class Traditional(Account):
-        self.balance = max(0, self.balance - gross)
     def withdraw(self, need, age, tx, penalty):
         pen = 0 if age > 59 else penalty
         g, unmet = solve_gross(need, lambda g: g - tx.extra(d_ord=g) - pen * g, self.balance)
@@ -143,6 +143,13 @@ class Portfolio:
     trad: Traditional
     brokerage: Brokerage
 
+    def withdraw(self, need, age, tx, penalty):
+        """Brokerage first, then Roth, then traditional. Returns the unmet amount."""
+        need = self.brokerage.sell(need, tx)
+        if need > 1e-6:
+            need = self.roth.withdraw(need, age, tx, penalty)
+        if need > 1e-6:
+            need = self.trad.withdraw(need, age, tx, penalty)
         return need
 
     def grow(self, rate):
@@ -182,43 +189,151 @@ class Home:
     base_year: int
 
     def cost(self, year, inflation):
+        upkeep = (self.annual_cost - self.mortgage.payment) * inflation ** (year - self.base_year)
         return upkeep + (0 if self.mortgage.paid_off(year) else self.mortgage.payment)
 
-    def sale_proceeds(self, year, ord_tax = ORD, ltcg_rate = LTCG):
+    def sale_proceeds(self, year, tx, has_spouse):
+        """Net proceeds; records any taxable gain in `tx`."""
         price = self.value * 0.95      # 5% selling costs
         exclusion = 500_000 if has_spouse else 250_000
         taxable = max(0, price - self.cost_basis - exclusion)
-        rate = (ord_tax if year - self.mortgage.start_year < 2 else ltcg_rate) + STATE
-        return price - self.mortgage.balance(year) - rate * taxable
+        kw = {"d_ord": taxable} if year - self.mortgage.start_year < 2 else {"d_gains": taxable}
+        tax = tx.extra(**kw)
+        tx.realize(**kw)
         return price - self.mortgage.balance(year) - tax
 
 
 # ---------- Simulation ----------
-pf = Portfolio(Roth(900_000, 500_000), Traditional(100_000), Brokerage(700_000, 500_000))
-home = Home(1_900_000, 1_600_000, Mortgage(750_000, 0.05375, 30, 2023), HOUSING_OWN, START_YEAR)  # None if renting
-    print(f"===== {year} (age {age}) =====\nStart: {pf}")
+@dataclass
+class SimulationRun:
+    portfolio: Portfolio
+    home: Optional[Home]                                # None if renting
+
+    # Planning ages
     start_year: int = date.today().year
     age_start: int = 35
+    age_retire: int = 40
+    age_end_pt: int = 55
+    age_ss: int = 67
+    age_end: int = 99
+
+    # Household
+    has_spouse: bool = True
     earners: int = 1                                    # number of wage earners (for the FICA wage base)
 
     # Income
-    net = post_tax - housing - (EXP_WORKING if working else EXP_RETIRED) * infl
-    print(f"Pre-tax {pre_tax:,.0f} | Post-tax {post_tax:,.0f} | Net {net:,.0f}")
-    if net >= 0:
-        pf.brokerage.deposit(net)
-
-    # Growth
-    pf.grow(GROWTH)
-        pf.brokerage.deposit(home.sale_proceeds(year, fed_income_tax, long_term_tax))
-        home = None
-
-    if home == None and year == NEW_HOME_YEAR and pf.brokerage.balance > 0:     # no brokerage -> no purchase
-        cost = NEW_HOME_COST * HOME_APPREC ** t
-        down = min(0.2 * cost, pf.brokerage.net_available(long_term_tax))
-        home = Home(cost, cost, mortgage, mortgage.payment + 0.015 * cost, year)  # +1.5% insurance + taxes
+    pre_ret_income: float = 210_000
+    post_ret_income: float = 0
     ss_income: float = 50_000                           # TODO: link to SSA calculator, think about entitlement cuts
 
+    # Contributions
     pretax_contrib: float = 0
     roth_contrib: float = 8_000
     employer_match: float = 8_000
     contrib_annual_increase: float = 1.01
+
+    # Expenses
+    exp_working: float = 100_000                        # non-housing
+    exp_retired: float = 100_000                        # non-housing
+    housing_own: float = 90_000
+    housing_rent: float = 60_000
+
+    # Taxes
+    state_tax: float = 0.05                             # flat state rate
+    penalty: float = 0.10                               # early-withdrawal penalty
+
+    # Economy
+    growth: float = 1.10
+    inflation: float = 1.04
+    home_apprec: float = 1.04
+
+    # Optional events (None to disable)
+    home_sale_year: Optional[int] = 2028
+    new_home_year: Optional[int] = 2035
+    new_home_cost: float = 1_300_000
+    new_mortgage_rate: float = 0.06
+    new_mortgage_years: int = 30
+
+    def __post_init__(self):
+        if self.home_sale_year and self.new_home_year:
+            assert self.new_home_year > self.home_sale_year
+        # TODO: age bounds and contribution feasibility checks go here
+    
+    def run(self):
+        """Simulate year by year. Returns a list of per-year result dicts."""
+        pf, home = deepcopy(self.portfolio), deepcopy(self.home)
+        results = []
+
+        def balances(prefix):
+            return {f"{prefix}_brokerage": pf.brokerage.balance,
+                    f"{prefix}_traditional": pf.trad.balance,
+                    f"{prefix}_roth": pf.roth.balance}
+
+        def house_status(year):
+            if home is None:
+                return {"owns_home": False, "home_value": None, "mortgage_balance": None, "mortgage_paid_off": None}
+            return {"owns_home": True, "home_value": home.value,
+                    "mortgage_balance": home.mortgage.balance(year),
+                    "mortgage_paid_off": home.mortgage.paid_off(year)}
+
+        for t in range(self.age_end - self.age_start + 1):
+            year, age = self.start_year + t, self.age_start + t
+            infl = self.inflation ** t
+            cg = self.contrib_annual_increase ** t
+            working = age <= self.age_retire
+            row = {"year": year, "age": age, **balances("start")}
+
+            # Income
+            wages = (self.pre_ret_income if working else self.post_ret_income if age <= self.age_end_pt else 0) * infl
+            pretax = self.pretax_contrib * cg if working else 0
+            if working:
+                pf.trad.deposit(pretax + self.employer_match * cg)
+                pf.roth.deposit(self.roth_contrib * cg)
+            ss = self.ss_income * infl if age >= self.age_ss else 0      # COLA-adjusted
+
+            tx = TaxYear(infl, ordinary=wages - pretax + ss, has_spouse = self.has_spouse, state = self.state_tax)
+            fica = 0.062 * min(wages, self.earners * SS_WAGE_BASE * infl) + 0.0145 * wages
+            post_tax = tx.ordinary - tx.total() - fica - (self.roth_contrib * cg if working else 0)
+
+            # Net income -> brokerage surplus or drawdown
+            housing = home.cost(year, self.inflation) if home else self.housing_rent * infl
+            net = post_tax - housing - (self.exp_working if working else self.exp_retired) * infl
+            row.update(pre_tax_income=tx.ordinary, post_tax_income=post_tax, net_income=net, failed=False, unmet=0.0)
+
+            if net >= 0:
+                pf.brokerage.deposit(net)
+            else:
+                unmet = pf.withdraw(-net, age, tx, self.penalty)
+                if unmet > 1:
+                    row.update(failed=True, unmet=unmet, **balances("end"), **house_status(year))
+                    results.append(row)
+                    break
+
+            # Growth
+            pf.grow(self.growth)
+            if home:
+                home.value *= self.home_apprec
+
+            # One-time house events (end-of-year values, as before)
+            if home and year == self.home_sale_year:
+                pf.brokerage.deposit(home.sale_proceeds(year, tx, self.has_spouse))
+                home = None
+
+            if home is None and year == self.new_home_year and pf.brokerage.balance > 0:
+                cost = self.new_home_cost * self.home_apprec ** t
+                down = 0.2 * cost
+                down -= pf.brokerage.sell(down, tx)              # down payment = what the brokerage could raise
+                mortgage = Mortgage(cost - down, self.new_mortgage_rate, self.new_mortgage_years, year)
+                home = Home(cost, cost, mortgage, mortgage.payment + 0.015 * cost, year)  # +1.5% insurance + taxes
+
+            row.update(**balances("end"), **house_status(year))
+            results.append(row)
+
+        return results
+
+sim = SimulationRun(
+    Portfolio(Roth(900_000, 500_000), Traditional(100_000), Brokerage(700_000, 500_000)) ,
+    Home(1_900_000, 1_600_000, Mortgage(750_000, 0.05375, 30, 2023), 90_000, date.today().year)
+)
+
+print(pd.DataFrame(sim.run()))
