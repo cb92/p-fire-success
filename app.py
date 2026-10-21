@@ -397,6 +397,20 @@ st.caption('Most FIRE (Financial Independence Retire Early) calculators tell you
     '\n\nTo use the tool, change the constraints in the sidebar to the left and run the simulation. For more information on how this tool '
     'works under the hood, visit the [README](https://github.com/cb92/p-fire-success) at the github repo.')
 
+# Initialize session state for simulation results
+if "results_df" not in st.session_state:
+    st.session_state.results_df = None
+if "runs" not in st.session_state:
+    st.session_state.runs = None
+
+# Toggle for currency adjustment (runs seamlessly without re-executing simulation)
+dollar_mode = st.radio(
+    "Display Currency Mode",
+    ["Real Dollars (Future)", "Today's Dollars (Inflation-Adjusted)"],
+    horizontal=True
+)
+is_todays_dollars = dollar_mode == "Today's Dollars (Inflation-Adjusted)"
+
 with st.sidebar:
     st.header("Simulation Parameters")
 
@@ -483,17 +497,35 @@ if run_button:
             res_df, _ = sim.run()
             df = pd.DataFrame(res_df)
             df["end_portfolio_value"] = df["end_brokerage"] + df["end_traditional"] + df["end_roth"]
+            df["home_equity"] = df["home_value"].fillna(0.0) - df["mortgage_balance"].fillna(0.0)
+            df["debt"] = -df["mortgage_balance"].fillna(0.0)
+            df["net_worth"] = df["end_portfolio_value"] + df["home_equity"]
             df["run_id"] = f"Run {i + 1}"
             runs.append(df)
 
-        results_df = pd.concat(runs, ignore_index=True)
+        st.session_state.results_df = pd.concat(runs, ignore_index=True)
+        st.session_state.runs = runs
+    except Exception as e:
+        st.error(f"Simulation Error: {e}")
+
+if st.session_state.results_df is not None:
+    try:
+        results_df = st.session_state.results_df.copy()
+        runs = st.session_state.runs
+
+        dollar_cols = ["end_portfolio_value", "net_worth", "home_equity", "debt", "end_roth", "end_traditional", "end_brokerage"]
+        if is_todays_dollars and "cum_inflation" in results_df.columns:
+            for col in dollar_cols:
+                if col in results_df.columns:
+                    results_df[col] = results_df[col] / results_df["cum_inflation"]
+
+        # 1. Spaghetti Chart
         pivot_df = results_df.pivot(index="year", columns="run_id", values="end_portfolio_value")
         pivot_df.index = pivot_df.index.astype(str)
-        pivot_df = pivot_df.sample(n=100, axis=1, random_state=42)
+        pivot_df = pivot_df.sample(n=min(100, pivot_df.shape[1]), axis=1, random_state=42)
         pivot_df_reset = pivot_df.reset_index()
         melted_df = pivot_df_reset.melt(id_vars="year", var_name="run_id", value_name="end_portfolio_value")
 
-        # Create the line chart with $k/M/B formatting
         chart = (
             alt.Chart(melted_df)
             .mark_line(opacity=0.7, strokeWidth=1.5)
@@ -501,10 +533,10 @@ if run_button:
                 x=alt.X("year:O", title="Year"),
                 y=alt.Y(
                     "end_portfolio_value:Q",
-                    title="End Portfolio Value ($)",
-                    axis=alt.Axis(format="$~s")  # Formats numbers to $100k, $1.5M, $2B
+                    title=f"End Portfolio Value ({'Today$' if is_todays_dollars else '$'})",
+                    axis=alt.Axis(format="$~s")
                 ),
-                color=alt.Color("run_id:N", legend=None),  # Hide legend since 100 lines clutter it
+                color=alt.Color("run_id:N", legend=None),
                 tooltip=[
                     alt.Tooltip("year:O", title="Year"),
                     alt.Tooltip("run_id:N", title="Run ID"),
@@ -514,43 +546,26 @@ if run_button:
             .properties(height=400)
         )
 
-        st.subheader("Simulated Portfolio End Value Over Time (100 randomly selected runs)")
+        st.subheader(f"Simulated Portfolio End Value Over Time ({'Today’s Dollars' if is_todays_dollars else 'Real Dollars'})")
         st.altair_chart(chart, use_container_width=True)
 
-        # Calculate failure year (first year where failed == True) and survival duration per run
+        # 2. Failure analysis & Success Rate
         failure_years = []
-        last_years = []
-        end_values = []
-
         for df in runs:
-            df["home_equity"] = df["home_value"].fillna(0.0) - df["mortgage_balance"].fillna(0.0)
-            df["debt"] = -df["mortgage_balance"].fillna(0.0)
-            df['net_worth'] = df['end_portfolio_value'] + df['home_equity']
-
             failed_rows = df[df["failed"] == True]
             if not failed_rows.empty:
                 failure_years.append(failed_rows["year"].iloc[0])
             else:
                 failure_years.append(None)
-            
-            last_years.append(df["year"].max())
-            end_values.append(df["end_portfolio_value"].iloc[-1] if failed_rows.empty else 0.0)
 
-        # Re-concatenate so results_df contains home_equity, debt, and non_roth
-        results_df = pd.concat(runs, ignore_index=True)
-
-        # Big Number: % Chance of Success
         success_count = sum(1 for f in failure_years if f is None)
         success_pct = (success_count / len(runs)) * 100
         st.metric(label="Success Rate (Reached end of plan with > $0)", value=f"{success_pct:.1f}%")
 
-        # Bar Chart: % of time money runs out in year X
         failed_years_series = pd.Series([y for y in failure_years if y is not None])
         if not failed_years_series.empty:
             all_years_seq = range(start_year, start_year + (age_end - age_start + 1))
             fail_counts_by_year = failed_years_series.value_counts().reindex(all_years_seq, fill_value=0)
-            
-            # Unconditional CDF (% of all runs failed by year X)
             cdf_series = (fail_counts_by_year.cumsum() / len(runs)) * 100
             cdf_series.index = cdf_series.index.astype(str)
             
@@ -559,18 +574,8 @@ if run_button:
         else:
             st.info("No simulation runs ran out of money before the plan ended.")
 
-        # Portfolio Trajectories (Median and 25th-75th Percentiles based on Ranking)
-        # Rank runs: 1st by end_portfolio_value (descending), 2nd by max year reached (descending)
-        run_rankings = pd.DataFrame({
-            "run_id": [df["run_id"].iloc[0] for df in runs],
-            "end_val": end_values,
-            "max_year": last_years
-        }).sort_values(by=["end_val", "max_year"], ascending=[False, False]).reset_index(drop=True)
-        run_rankings["rank_pct"] = np.linspace(1.0, 0.0, len(run_rankings))
-        median_run_id = run_rankings.iloc[(run_rankings["rank_pct"] - 0.50).abs().argmin()]["run_id"]
-
-        # Prepare aggregate component data across years
-        components = ["net_worth", "home_equity", "debt", "end_portfolio_value",  "end_roth", "end_traditional", "end_brokerage"]
+        # 3. Component Charts
+        components = ["net_worth", "home_equity", "debt", "end_portfolio_value", "end_roth", "end_traditional", "end_brokerage"]
         component_labels = {
             "end_portfolio_value": "Total Equities Portfolio Value",
             "net_worth": "Net Worth (including debt)",
@@ -582,7 +587,7 @@ if run_button:
         }
         
         component_descriptions = {
-            "end_portfolio_value": "Total brokerage portfolio value, including retiremeny and non-retirement",
+            "end_portfolio_value": "Total brokerage portfolio value, including retirement and non-retirement",
             "net_worth": "Net worth (portfolio plus home equity less debt)",
             "home_equity": "Difference between estimated home value and remaining mortgage principal.",
             "debt": "Remaining unpaid principal balance on mortgage (shown as negative).",
@@ -594,11 +599,9 @@ if run_button:
         chart_rows = []
         for comp in components:
             comp_pivot = results_df.pivot(index="year", columns="run_id", values=comp).fillna(0.0)
-            
             median_series = comp_pivot.quantile(0.5, axis=1)
             p25_series = comp_pivot.quantile(0.25, axis=1)
             p75_series = comp_pivot.quantile(0.75, axis=1)
-
 
             for yr in comp_pivot.index:
                 chart_rows.append({
@@ -621,18 +624,11 @@ if run_button:
             "end_brokerage": "#059669"
         }
 
-
-        "#0ea5e9", "#059669", "#fbbf24"
-
-
-        # Helper function to render individual charts
         def render_component_chart(comp):
             title_text = f"{component_labels[comp]}: Median & 25th–75th Percentile Band"   
             desc_text = component_descriptions[comp]
-            
             comp_df = df_altair[df_altair["component_key"] == comp]
 
-            # Shaded 25th - 75th percentile band
             band = alt.Chart(comp_df).mark_area(opacity=0.25).encode(
                 x=alt.X("year:O", title="Year"),
                 y=alt.Y("p25:Q", title="Value ($)", axis=alt.Axis(format="$~s")),
@@ -646,7 +642,6 @@ if run_button:
                 ]
             )
 
-            # Solid median line
             line = alt.Chart(comp_df).mark_line(strokeWidth=2.5).encode(
                 x=alt.X("year:O", title="Year"),
                 y=alt.Y("median:Q", title="Value ($)", axis=alt.Axis(format="$~s")),
@@ -665,20 +660,16 @@ if run_button:
             st.caption(desc_text)
             st.altair_chart(chart, use_container_width=True)
 
-        # 1. Net Worth (single row)
         render_component_chart("net_worth")
 
-        # 2. Home Equity and Debt (2 columns)
         col1, col2 = st.columns(2)
         with col1:
             render_component_chart("home_equity")
         with col2:
             render_component_chart("debt")
 
-        # 3. End Portfolio Value (single row)
         render_component_chart("end_portfolio_value")
 
-        # 4. Roth, Traditional, and Brokerage (3 columns)
         col3, col4, col5 = st.columns(3)
         with col3:
             render_component_chart("end_roth")
@@ -687,11 +678,8 @@ if run_button:
         with col5:
             render_component_chart("end_brokerage")
 
-
     except Exception as e:
-        st.error(f"Simulation Error: {e}")
-
-
+        st.error(f"Render Error: {e}")
 
 st.caption(
 '_Important notes: \n'
