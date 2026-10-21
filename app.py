@@ -18,6 +18,7 @@ BRACKETS = {
 }
 LTCG_BREAKS = {True: (98_900, 613_700), False: (49_450, 545_500)}   # 0%->15% and 15%->20% thresholds
 SS_WAGE_BASE = 184_500                                              # per earner, indexed by inflation
+RISK_FREE_GROWTH = 1.025                                            # assumed growth rate for risk free asset (2 pct per year)
 
 # ---------- Data Functions ----------
 def _annual(fname):
@@ -357,7 +358,9 @@ class SimulationRun:
                     break
 
             # Growth
-            pf.grow(growth[t])
+            # adjust glidepath by percent of portfolio that should be held in equities by age using a relatively aggressive growth assumption
+            pct_stock = np.clip((110 - age) / 100.0, 0.10, 1.0)
+            pf.grow(pct_stock*growth[t] + (1-pct_stock)*RISK_FREE_GROWTH)
             if home:
                 home.value *= apprec[t]
 
@@ -381,6 +384,14 @@ class SimulationRun:
 
 # ---------- Streamlit Interface ----------
 st.title("Monte Carlo Portfolio Simulator")
+st.caption('Most FIRE (Financial Independence Retire Early) calculators tell you how much longer you need to work or how many '
+    'assets you need to have to achieve success at a pre-determined level of certainty. For example, a common rule of thumb is to '
+    'assume a safe withdrawal rate of 4% in order for a set of assets to support a lifestyle in perpetuity. This calculator takes '
+    'a probabilistic approach to the question of FIRE readiness, and instead reports the likelihood of FIRE success based on several '
+    'relevant user inputs. The ability to quickly toggle different inputs allows for comparison of success rates by changing one or '
+    'two variables, and can thus be used to aid in more robust decision making.'
+    '\n\nTo use the tool, change the constraints in the sidebar to the left and run the simulation. For more information on how this tool '
+    'works under the hood, visit the [README](https://github.com/cb92/p-fire-success) at the github repo.')
 
 with st.sidebar:
     st.header("Simulation Parameters")
@@ -405,8 +416,8 @@ with st.sidebar:
     st.subheader("Timeline & Ages")
     start_year = date.today().year # = st.number_input("Start Year", value=date.today().year, step=1, help="Base simulation start year") # don't allow user to change this
     age_start = st.slider("Start Age", 18, 100, 35, help="Starting age of person")
-    age_retire = st.slider("Retire Age", age_start, 100, 45, help="Age when full retirement begins")
-    age_end_pt = st.slider("Part-Time End Age", age_retire, 100, 55, help="Age when part-time income ends")
+    age_retire = st.slider("Retire Age", age_start, 100, 55, help="Age when full retirement begins")
+    age_end_pt = st.slider("Part-Time End Age", age_retire, 100, 65, help="Age when part-time income ends")
     age_ss = st.slider("Social Security Age", 62, 70, 67, help="Age Social Security benefit starts")
     age_end = st.slider("End Age", age_end_pt, 110, 99, help="Simulation end age")
 
@@ -442,6 +453,8 @@ with st.sidebar:
         new_home_cost, new_mortgage_rate, new_mortgage_years = 1_300_000, 0.06, 30
 
     run_button = st.button("Run Simulation", type="primary", use_container_width=True)
+    st.caption('Once this button is pressed, it will take a few seconds to produce outputs while 1000 different simulations '
+        'under different market conditions are run. Please be patient!')
 
 if run_button:
     try:
@@ -572,7 +585,7 @@ if run_button:
         }
 
         for comp in components:
-            title_text = component_labels[comp]
+            title_text = f"{component_labels[comp]}: Median & 25th–75th Percentile Band"   
             desc_text = component_descriptions[comp]
             
             comp_df = df_altair[df_altair["component_key"] == comp]
@@ -593,7 +606,6 @@ if run_button:
             )
 
             chart = (band + line).properties(
-                title=f"{title_text}: Median & 25th–75th Percentile Band",
                 height=280
             )
 
@@ -604,3 +616,13 @@ if run_button:
 
     except Exception as e:
         st.error(f"Simulation Error: {e}")
+
+
+
+st.caption(
+'_Important notes: \n'
+'This is a financial planning tool and does not constitute personalized investment, tax, or legal advice. '
+'The presence of this application does not imply a certain level of skill or training and the results '
+'are not guarantees of future performance. This model relies on historical data and assumed return distributions that may not reflect actual future returns. '
+'Always consult a qualified financial or tax professional before making material financial decisions._'
+)

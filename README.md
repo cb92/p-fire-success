@@ -4,7 +4,7 @@
 # Monte Carlo Portfolio Simulator
 
 ## Motivation
-Most FIRE (Financial Independence Retire Early) calculators just tell you how much longer you need to work or how many assets you need to have to achieve success at a pre-determined level of certainty. For example, a common rule of thumb is to assume a safe withdrawal rate of 4% in order for a set of assets to support a lifestyle in perpetuity. This calculator takes a probabilistic approach to the question of FIRE readiness, and instead reports the likelihood of FIRE success based on several relevant user inputs. The ability to quickly toggle different inputs allows for comparison of success rates by changing one or two variables, and can thus be used to aid in more robust decision making. 
+Most FIRE (Financial Independence Retire Early) calculators tell you how much longer you need to work or how many assets you need to have to achieve success at a pre-determined level of certainty. For example, a common rule of thumb is to assume a safe withdrawal rate of 4% in order for a set of assets to support a lifestyle in perpetuity. This calculator takes a probabilistic approach to the question of FIRE readiness, and instead reports the likelihood of FIRE success based on several relevant user inputs. The ability to quickly toggle different inputs allows for comparison of success rates by changing one or two variables, and can thus be used to aid in more robust decision making. 
 
 ## Overview
 This tool runs Monte Carlo (MC) simulations to project lifetime financial trajectories, portfolio longevity, and failure risks across retirement. 
@@ -29,6 +29,8 @@ While these cash flows occur continuously in reality, sequential discrete simula
 2. **Withdrawal Hierarchy:** Cash shortfalls draw first from taxable Brokerage accounts (pro-rata capital gains vs. basis), then tax-free Roth accounts (basis tax-free, earnings taxed/penalized if under age 59.5), and finally Traditional pre-tax accounts.
 3. **Solver Logic:** For taxable or penalized accounts, a binary search solver calculates the exact gross withdrawal necessary to yield the target net cash after marginal tax impact.
 4. **Mortgages & Real Estate:** Amortization uses standard monthly compounding math. Selling a primary residence applies single ($250k) or joint ($500k) Section 121 capital gains tax exclusions.
+5. **Equity Allocation** This tool models equity allocation as a function of age, where the percentage of stock in the modeled portfolio is equal to 110 less the portfolio owner's age. Based on this percentage, the modeled annual growth is a weighted combination of simulated equity growth and some assumed risk-free growth (ie. if non-equity investments are placed into bonds/money market funds)
+
 
 ## Input Data & Sources
 
@@ -53,8 +55,6 @@ The app runs 1,000 iterations per simulation and provides full distributional in
   - Remaining Mortgage Debt
 
 ## What Isn't Modeled / When This Tool Is Not For You
-
-This tool models a constant equity allocation across the entire simulation timeframe rather than a dynamic glidepath (e.g., shifting toward fixed income near retirement). Because Sequence-of-Returns Risk (SoRR) is most critical during the early decumulation years just after retirement - where severe drawdowns combined with ongoing withdrawals can prematurely exhaust a portfolio - holding a fixed equity exposure through retirement may understate tail-risk failures in adverse scenarios. Conversely, for successful paths, maintaining full equity exposure throughout late retirement yields overly aggressive terminal portfolio values, which should be discounted accordingly. As always, this tool does NOT constitute financial advice or guidance and should be used with a full understanding of the reality of its inner workings. 
 
 This tool favors streamlined, robust core mechanics over hyper-complex edge cases. It may not fit your needs if you:
 - Own or manage multiple residential or commercial real estate properties simultaneously.
