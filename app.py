@@ -9,6 +9,10 @@ import streamlit as st
 import altair as alt
 
 DATA_DIR = Path("data")
+st.set_page_config(
+    page_title="Monte Carlo Portfolio Simulator",
+    page_icon=":chart_with_upward_trend:",
+    layout="wide")
 
 # Tax bracket information
 STD_DED = {True: 32_000, False: 16_100}
@@ -258,30 +262,30 @@ class SimulationRun:
     earners: int = 1                                    # number of wage earners (for the FICA wage base)
 
     # Income
-    pre_ret_income: float = 210_000
+    pre_ret_income: float = 120_000
     post_ret_income: float = 0
-    ss_income: float = 50_000                           # TODO: link to SSA calculator, think about entitlement cuts
+    ss_income: float = 30_000                           # TODO: link to SSA calculator, think about entitlement cuts
 
     # Contributions
-    pretax_contrib: float = 0
-    roth_contrib: float = 8_000
-    employer_match: float = 8_000
+    pretax_contrib: float = 15_000
+    roth_contrib: float = 7_000
+    employer_match: float = 5_000
     contrib_annual_increase: float = 1.01
 
     # Expenses
-    exp_working: float = 100_000                        # non-housing
-    exp_retired: float = 100_000                        # non-housing
-    housing_own: float = 90_000
-    housing_rent: float = 60_000
+    exp_working: float = 50_000                        # non-housing
+    exp_retired: float = 50_000                        # non-housing
+    housing_own: float = 30_000
+    housing_rent: float = 24_000
 
     # Taxes
     state_tax: float = 0.05                             # flat state rate
     penalty: float = 0.10                               # early-withdrawal penalty
 
     # Optional events (None to disable)
-    home_sale_year: Optional[int] = 2028
+    home_sale_year: Optional[int] = 2030
     new_home_year: Optional[int] = 2035
-    new_home_cost: float = 1_300_000
+    new_home_cost: float = 600_000
     new_mortgage_rate: float = 0.06
     new_mortgage_years: int = 30
 
@@ -397,21 +401,21 @@ with st.sidebar:
     st.header("Simulation Parameters")
 
     st.subheader("Accounts & Home")
-    roth_bal = st.number_input("Roth Balance ($)", value=900_000, step=10_000, help="Initial Roth IRA/401(k) balance")
-    roth_basis = st.number_input("Roth Basis ($)", value=500_000, step=10_000, help="Initial Roth IRA/401(k) contribution basis")
-    trad_bal = st.number_input("Traditional Balance ($)", value=100_000, step=10_000, help="Initial Traditional IRA/401(k) balance")
-    brok_bal = st.number_input("Brokerage Balance ($)", value=700_000, step=10_000, help="Initial taxable brokerage balance")
-    brok_basis = st.number_input("Brokerage Basis ($)", value=500_000, step=10_000, help="Initial taxable brokerage cost basis")
+    roth_bal = st.number_input("Roth Balance ($)", value=60_000, step=5_000, help="Initial Roth IRA/401(k) balance")
+    roth_basis = st.number_input("Roth Basis ($)", value=40_000, step=5_000, help="Initial Roth IRA/401(k) contribution basis")
+    trad_bal = st.number_input("Traditional Balance ($)", value=100_000, step=5_000, help="Initial Traditional IRA/401(k) balance")
+    brok_bal = st.number_input("Brokerage Balance ($)", value=50_000, step=5_000, help="Initial taxable brokerage balance")
+    brok_basis = st.number_input("Brokerage Basis ($)", value=40_000, step=5_000, help="Initial taxable brokerage cost basis")
     
     has_home = st.checkbox("Owns Home", value=True, help="Whether you currently own your primary residence")
     if has_home:
-        home_val = st.number_input("Home Value ($)", value=1_900_000, step=25_000, help="Current home market value")
-        home_basis = st.number_input("Home Basis ($)", value=1_600_000, step=25_000, help="Purchase price/cost basis")
-        mort_amt = st.number_input("Mortgage Amount ($)", value=750_000, step=10_000, help="Total original mortgage principal") 
-        mort_rate = st.number_input("Mortgage Rate", value=0.05375, step=0.001, format="%.5f", help="Annual interest rate decimal")
+        home_val = st.number_input("Home Value ($)", value=450_000, step=25_000, help="Current home market value")
+        home_basis = st.number_input("Home Basis ($)", value=400_000, step=25_000, help="Purchase price/cost basis")
+        mort_amt = st.number_input("Mortgage Amount ($)", value=320_000, step=10_000, help="Total original mortgage principal") 
+        mort_rate = st.number_input("Mortgage Rate", value=0.065, step=0.001, format="%.5f", help="Annual interest rate decimal")
         mort_years = st.number_input("Mortgage Term (Years)", value=30, min_value=1, max_value=50, step=1, help="Original loan term in years")
-        mort_start = st.number_input("Mortgage Start Year", value=2023, step=1, help="Year mortgage began")
-        housing_own = st.number_input("Annual Home Cost ($)", value=90_000, step=5_000, help="Annual payment plus upkeep")
+        mort_start = st.number_input("Mortgage Start Year", value=2021, step=1, help="Year mortgage began")
+        housing_own = st.number_input("Annual Home Cost ($)", value=30_000, step=2_500, help="Annual payment plus upkeep")
 
     st.subheader("Timeline & Ages")
     start_year = date.today().year # = st.number_input("Start Year", value=date.today().year, step=1, help="Base simulation start year") # don't allow user to change this
@@ -424,18 +428,18 @@ with st.sidebar:
     st.subheader("Household & Income")
     has_spouse = st.checkbox("Has Spouse", value=True, help="Check this box if you are planning with a spouse (affects tax treatment)")
     earners = st.slider("Earners", 1, 2, 1, help="Number of wage earners for Social Security wage base limit")
-    pre_ret_income = st.number_input("Pre-Retirement Income ($)", value=210_000, step=5_000, help="Annual gross earned income")
+    pre_ret_income = st.number_input("Pre-Retirement Income ($)", value=120_000, step=5_000, help="Annual gross earned income")
     post_ret_income = st.number_input("Post-Retirement Income ($)", value=0, step=5_000, help="Annual gross post-retirement income until part-time end age")
-    ss_income = st.number_input("Social Security Income ($)", value=50_000, step=2_500, help="Annual Social Security payout in base dollars. Check the [SSA Quick Calc](https://www.ssa.gov/OACT/quickcalc/) for an estimate.")
+    ss_income = st.number_input("Social Security Income ($)", value=30_000, step=2_500, help="Annual Social Security payout in base dollars. Check the [SSA Quick Calc](https://www.ssa.gov/OACT/quickcalc/) for an estimate.")
 
     st.subheader("Contributions & Expenses")
-    pretax_contrib = st.number_input("Pre-tax Contribution ($)", value=0, step=1_000, help="Annual pre-tax 401(k) contribution")
-    roth_contrib = st.number_input("Roth Contribution ($)", value=8_000, step=500, help="Annual Roth IRA contribution")
-    employer_match = st.number_input("Employer Match ($)", value=8_000, step=500, help="Annual employer matching contribution")
+    pretax_contrib = st.number_input("Pre-tax Contribution ($)", value=15_000, step=1_000, help="Annual pre-tax 401(k) contribution")
+    roth_contrib = st.number_input("Roth Contribution ($)", value=7_000, step=500, help="Annual Roth IRA contribution")
+    employer_match = st.number_input("Employer Match ($)", value=5_000, step=500, help="Annual employer matching contribution")
     contrib_annual_increase = st.number_input("Contrib Growth Multiplier", value=1.01, step=0.005, format="%.3f", help="Annual growth factor on contributions")
-    exp_working = st.number_input("Working Non-Housing Expenses ($)", value=100_000, step=5_000, help="Annual living expenses prior to retirement, not including housing")
-    exp_retired = st.number_input("Retired Non-Housing Expenses ($)", value=100_000, step=5_000, help="Annual living expenses during retirement, not including housing")
-    housing_rent = st.number_input("Rent Cost ($)", value=60_000, step=2_500, help="Annual rent when not owning a home")
+    exp_working = st.number_input("Working Non-Housing Expenses ($)", value=50_000, step=2_500, help="Annual living expenses prior to retirement, not including housing")
+    exp_retired = st.number_input("Retired Non-Housing Expenses ($)", value=50_000, step=2_500, help="Annual living expenses during retirement, not including housing")
+    housing_rent = st.number_input("Rent Cost ($)", value=24_000, step=1_000, help="Annual rent when not owning a home")
 
     st.subheader("Taxes & Events")
     state_tax = st.number_input("State Tax Rate", value=0.05, step=0.005, format="%.3f", help="Flat state income tax rate")
@@ -443,17 +447,17 @@ with st.sidebar:
     
     enable_events = st.checkbox("Enable Home Real Estate Events", value=True, help="Enable home sale and repurchase events")
     if enable_events:
-        home_sale_year = st.number_input("Home Sale Year", value=2028, step=1, help="Year current home is sold")
+        home_sale_year = st.number_input("Home Sale Year", value=2030, step=1, help="Year current home is sold")
         new_home_year = st.number_input("New Home Purchase Year", value=2035, step=1, help="Year new home is purchased")
-        new_home_cost = st.number_input("New Home Cost ($)", value=1_300_000, step=50_000, help="New home price estimate in current year dollars")
+        new_home_cost = st.number_input("New Home Cost ($)", value=600_000, step=25_000, help="New home price estimate in current year dollars")
         new_mortgage_rate = st.number_input("New Mortgage Rate", value=0.06, step=0.005, help="Interest rate for new mortgage")
         new_mortgage_years = st.number_input("New Mortgage Term (Years)", value=30, step=1, help="Term of new mortgage")
     else:
         home_sale_year, new_home_year = None, None
-        new_home_cost, new_mortgage_rate, new_mortgage_years = 1_300_000, 0.06, 30
+        new_home_cost, new_mortgage_rate, new_mortgage_years = 600_000, 0.06, 30
 
     run_button = st.button("Run Simulation", type="primary", use_container_width=True)
-    st.caption('Once this button is pressed, it will take a few seconds to produce outputs while 1000 different simulations '
+    st.caption('Once this button is pressed, it will take a few seconds to produce outputs while 500 different simulations '
         'under different market conditions are run. Please be patient!')
 
 if run_button:
@@ -475,7 +479,7 @@ if run_button:
         )
 
         runs = []
-        for i in range(1000):
+        for i in range(500):
             res_df, _ = sim.run()
             df = pd.DataFrame(res_df)
             df["end_portfolio_value"] = df["end_brokerage"] + df["end_traditional"] + df["end_roth"]
@@ -484,9 +488,34 @@ if run_button:
 
         results_df = pd.concat(runs, ignore_index=True)
         pivot_df = results_df.pivot(index="year", columns="run_id", values="end_portfolio_value")
+        pivot_df.index = pivot_df.index.astype(str)
+        pivot_df = pivot_df.sample(n=100, axis=1, random_state=42)
+        pivot_df_reset = pivot_df.reset_index()
+        melted_df = pivot_df_reset.melt(id_vars="year", var_name="run_id", value_name="end_portfolio_value")
 
-        st.subheader("Simulated Portfolio End Value Over Time (1000 Runs)")
-        st.line_chart(pivot_df)
+        # Create the line chart with $k/M/B formatting
+        chart = (
+            alt.Chart(melted_df)
+            .mark_line(opacity=0.7, strokeWidth=1.5)
+            .encode(
+                x=alt.X("year:O", title="Year"),
+                y=alt.Y(
+                    "end_portfolio_value:Q",
+                    title="End Portfolio Value ($)",
+                    axis=alt.Axis(format="$~s")  # Formats numbers to $100k, $1.5M, $2B
+                ),
+                color=alt.Color("run_id:N", legend=None),  # Hide legend since 100 lines clutter it
+                tooltip=[
+                    alt.Tooltip("year:O", title="Year"),
+                    alt.Tooltip("run_id:N", title="Run ID"),
+                    alt.Tooltip("end_portfolio_value:Q", title="Value", format="$~s")
+                ]
+            )
+            .properties(height=400)
+        )
+
+        st.subheader("Simulated Portfolio End Value Over Time (100 randomly selected runs)")
+        st.altair_chart(chart, use_container_width=True)
 
         # Calculate failure year (first year where failed == True) and survival duration per run
         failure_years = []
@@ -496,6 +525,7 @@ if run_button:
         for df in runs:
             df["home_equity"] = df["home_value"].fillna(0.0) - df["mortgage_balance"].fillna(0.0)
             df["debt"] = -df["mortgage_balance"].fillna(0.0)
+            df['net_worth'] = df['end_portfolio_value'] + df['home_equity']
 
             failed_rows = df[df["failed"] == True]
             if not failed_rows.empty:
@@ -509,12 +539,12 @@ if run_button:
         # Re-concatenate so results_df contains home_equity, debt, and non_roth
         results_df = pd.concat(runs, ignore_index=True)
 
-        # 1. Big Number: % Chance of Success
+        # Big Number: % Chance of Success
         success_count = sum(1 for f in failure_years if f is None)
         success_pct = (success_count / len(runs)) * 100
         st.metric(label="Success Rate (Reached end of plan with > $0)", value=f"{success_pct:.1f}%")
 
-        # 2. Bar Chart: % of time money runs out in year X
+        # Bar Chart: % of time money runs out in year X
         failed_years_series = pd.Series([y for y in failure_years if y is not None])
         if not failed_years_series.empty:
             all_years_seq = range(start_year, start_year + (age_end - age_start + 1))
@@ -522,13 +552,14 @@ if run_button:
             
             # Unconditional CDF (% of all runs failed by year X)
             cdf_series = (fail_counts_by_year.cumsum() / len(runs)) * 100
+            cdf_series.index = cdf_series.index.astype(str)
             
             st.subheader("Cumulative Probability of Running Out of Money by Year (%)")
             st.line_chart(cdf_series)
         else:
             st.info("No simulation runs ran out of money before the plan ended.")
 
-        # 3. Portfolio Trajectories (Median and 25th-75th Percentiles based on Ranking)
+        # Portfolio Trajectories (Median and 25th-75th Percentiles based on Ranking)
         # Rank runs: 1st by end_portfolio_value (descending), 2nd by max year reached (descending)
         run_rankings = pd.DataFrame({
             "run_id": [df["run_id"].iloc[0] for df in runs],
@@ -539,8 +570,10 @@ if run_button:
         median_run_id = run_rankings.iloc[(run_rankings["rank_pct"] - 0.50).abs().argmin()]["run_id"]
 
         # Prepare aggregate component data across years
-        components = ["home_equity", "debt", "end_roth", "end_traditional", "end_brokerage"]
+        components = ["net_worth", "home_equity", "debt", "end_portfolio_value",  "end_roth", "end_traditional", "end_brokerage"]
         component_labels = {
+            "end_portfolio_value": "Total Equities Portfolio Value",
+            "net_worth": "Net Worth (including debt)",
             "home_equity": "Home Equity",
             "debt": "Mortgage Debt",
             "end_roth": "Roth Balance",
@@ -549,6 +582,8 @@ if run_button:
         }
         
         component_descriptions = {
+            "end_portfolio_value": "Total brokerage portfolio value, including retiremeny and non-retirement",
+            "net_worth": "Net worth (portfolio plus home equity less debt)",
             "home_equity": "Difference between estimated home value and remaining mortgage principal.",
             "debt": "Remaining unpaid principal balance on mortgage (shown as negative).",
             "end_roth": "Tax-free growth account balance (Roth IRA / Roth 401(k)).",
@@ -577,14 +612,21 @@ if run_button:
         df_altair = pd.DataFrame(chart_rows)
 
         colors = {
-            "home_equity": "#2ca02c",
-            "debt": "#d62728",
-            "end_roth": "#9467bd",
-            "end_traditional": "#ff7f0e",
-            "end_brokerage": "#1f77b4"
+            "end_portfolio_value": "#fbbf24",
+            "net_worth": "#0ea5e9",
+            "home_equity": "#059669",
+            "debt": "#059669",
+            "end_roth": "#059669",
+            "end_traditional": "#059669",
+            "end_brokerage": "#059669"
         }
 
-        for comp in components:
+
+        "#0ea5e9", "#059669", "#fbbf24"
+
+
+        # Helper function to render individual charts
+        def render_component_chart(comp):
             title_text = f"{component_labels[comp]}: Median & 25th–75th Percentile Band"   
             desc_text = component_descriptions[comp]
             
@@ -593,25 +635,57 @@ if run_button:
             # Shaded 25th - 75th percentile band
             band = alt.Chart(comp_df).mark_area(opacity=0.25).encode(
                 x=alt.X("year:O", title="Year"),
-                y=alt.Y("p25:Q", title="Value ($)", axis=alt.Axis(format="$,.0f")),
+                y=alt.Y("p25:Q", title="Value ($)", axis=alt.Axis(format="$~s")),
                 y2="p75:Q",
-                color=alt.value(colors[comp])
+                color=alt.value(colors[comp]),
+                tooltip=[
+                    alt.Tooltip("year:O", title="Year"),
+                    alt.Tooltip("median:Q", title="Median", format="$~s"),
+                    alt.Tooltip("p25:Q", title="25th Percentile", format="$~s"),
+                    alt.Tooltip("p75:Q", title="75th Percentile", format="$~s")
+                ]
             )
 
             # Solid median line
             line = alt.Chart(comp_df).mark_line(strokeWidth=2.5).encode(
                 x=alt.X("year:O", title="Year"),
-                y=alt.Y("median:Q", title="Value ($)"),
-                color=alt.value(colors[comp])
+                y=alt.Y("median:Q", title="Value ($)", axis=alt.Axis(format="$~s")),
+                color=alt.value(colors[comp]),
+                tooltip=[
+                    alt.Tooltip("year:O", title="Year"),
+                    alt.Tooltip("median:Q", title="Median", format="$~s"),
+                    alt.Tooltip("p25:Q", title="25th Percentile", format="$~s"),
+                    alt.Tooltip("p75:Q", title="75th Percentile", format="$~s")
+                ]
             )
 
-            chart = (band + line).properties(
-                height=280
-            )
+            chart = (band + line).properties(height=280)
 
             st.markdown(f"#### {title_text}")
             st.caption(desc_text)
             st.altair_chart(chart, use_container_width=True)
+
+        # 1. Net Worth (single row)
+        render_component_chart("net_worth")
+
+        # 2. Home Equity and Debt (2 columns)
+        col1, col2 = st.columns(2)
+        with col1:
+            render_component_chart("home_equity")
+        with col2:
+            render_component_chart("debt")
+
+        # 3. End Portfolio Value (single row)
+        render_component_chart("end_portfolio_value")
+
+        # 4. Roth, Traditional, and Brokerage (3 columns)
+        col3, col4, col5 = st.columns(3)
+        with col3:
+            render_component_chart("end_roth")
+        with col4:
+            render_component_chart("end_traditional")
+        with col5:
+            render_component_chart("end_brokerage")
 
 
     except Exception as e:
