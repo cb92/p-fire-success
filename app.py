@@ -413,66 +413,67 @@ is_todays_dollars = dollar_mode == "Today's Dollars (Inflation-Adjusted)"
 
 with st.sidebar:
     st.header("Simulation Parameters")
+    start_year = date.today().year 
 
     st.subheader("Accounts & Home")
-    roth_bal = st.number_input("Roth Balance ($)", value=60_000, step=5_000, help="Initial Roth IRA/401(k) balance")
-    roth_basis = st.number_input("Roth Basis ($)", value=40_000, step=5_000, help="Initial Roth IRA/401(k) contribution basis")
-    trad_bal = st.number_input("Traditional Balance ($)", value=100_000, step=5_000, help="Initial Traditional IRA/401(k) balance")
-    brok_bal = st.number_input("Brokerage Balance ($)", value=50_000, step=5_000, help="Initial taxable brokerage balance")
-    brok_basis = st.number_input("Brokerage Basis ($)", value=40_000, step=5_000, help="Initial taxable brokerage cost basis")
+    roth_bal = st.number_input("Roth Balance ($)", value=60_000, step=5_000, help="Initial Roth IRA/401(k) balance", min_value = 0)
+    roth_basis = st.number_input("Roth Basis ($)", value=40_000, step=5_000, help="Initial Roth IRA/401(k) contribution basis", min_value = 0)
+    trad_bal = st.number_input("Traditional Retirement Balance ($)", value=100_000, step=5_000, help="Initial Traditional IRA/401(k) balance", min_value = 0)
+    brok_bal = st.number_input("Non-Retirement Brokerage Balance ($)", value=50_000, step=5_000, help="Initial taxable brokerage balance", min_value = 0)
+    brok_basis = st.number_input("Non-Retirement Brokerage Basis ($)", value=40_000, step=5_000, help="Initial taxable brokerage cost basis", min_value = 0)
     
     has_home = st.checkbox("Owns Home", value=True, help="Whether you currently own your primary residence")
     if has_home:
-        home_val = st.number_input("Home Value ($)", value=450_000, step=25_000, help="Current home market value")
-        home_basis = st.number_input("Home Basis ($)", value=400_000, step=25_000, help="Purchase price/cost basis")
-        mort_amt = st.number_input("Mortgage Amount ($)", value=320_000, step=10_000, help="Total original mortgage principal") 
-        mort_rate = st.number_input("Mortgage Rate", value=0.065, step=0.001, format="%.5f", help="Annual interest rate decimal")
+        home_val = st.number_input("Home Value ($)", value=450_000, step=25_000, help="Current home market value", min_value = 0)
+        home_basis = st.number_input("Home Basis ($)", value=400_000, step=25_000, help="Purchase price/cost basis with improvements", min_value = 0)
+        mort_amt = st.number_input("Mortgage Amount ($)", value=320_000, step=10_000, help="Total original mortgage principal", min_value = 0) 
+        mort_rate = st.number_input("Mortgage Rate (%)", value=6.0, step=0.125, format="%.3f", help="Annual interest rate (%)", min_value = 0.0) / 100
         mort_years = st.number_input("Mortgage Term (Years)", value=30, min_value=1, max_value=50, step=1, help="Original loan term in years")
-        mort_start = st.number_input("Mortgage Start Year", value=2021, step=1, help="Year mortgage began")
-        housing_own = st.number_input("Annual Home Cost ($)", value=30_000, step=2_500, help="Annual payment plus upkeep")
+        mort_start = st.number_input("Mortgage Start Year", value=2021, step=1, help="Year mortgage began", min_value = 1990, max_value = start_year)
+        housing_own = st.number_input("Annual Home Cost ($)", value=30_000, step=2_500, help="Annual payment plus upkeep", min_value = 0)
 
     st.subheader("Timeline & Ages")
-    start_year = date.today().year # = st.number_input("Start Year", value=date.today().year, step=1, help="Base simulation start year") # don't allow user to change this
-    age_start = st.slider("Start Age", 18, 100, 35, help="Starting age of person")
-    age_retire = st.slider("Retire Age", age_start, 100, 55, help="Age when full retirement begins")
-    age_end_pt = st.slider("Part-Time End Age", age_retire, 100, 65, help="Age when part-time income ends")
+    age_start = st.slider("Start Age", 18, 100, 35, help="Your current age")
+    age_retire = st.slider("Retire Age", age_start, 100, 55, help="Age when you intend to retire")
+    age_end_pt = st.slider("Part-Time End Age", age_retire, 100, 65, help="Age when part-time income, which starts at retirement, ends (can be retirement age or after)")
     age_ss = st.slider("Social Security Age", 62, 70, 67, help="Age Social Security benefit starts")
     age_end = st.slider("End Age", age_end_pt, 110, 99, help="Simulation end age")
 
     st.subheader("Household & Income")
     has_spouse = st.checkbox("Has Spouse", value=True, help="Check this box if you are planning with a spouse (affects tax treatment)")
     earners = st.slider("Earners", 1, 2, 1, help="Number of wage earners for Social Security wage base limit")
-    pre_ret_income = st.number_input("Pre-Retirement Income ($)", value=120_000, step=5_000, help="Annual gross earned income")
-    post_ret_income = st.number_input("Post-Retirement Income ($)", value=0, step=5_000, help="Annual gross post-retirement income until part-time end age")
-    ss_income = st.number_input("Social Security Income ($)", value=30_000, step=2_500, help="Annual Social Security payout in base dollars. Check the [SSA Quick Calc](https://www.ssa.gov/OACT/quickcalc/) for an estimate.")
+    pre_ret_income = st.number_input("Pre-Retirement Income ($)", value=120_000, step=5_000, help="Annual gross earned income before retirement", min_value = 0)
+    post_ret_income = st.number_input("Post-Retirement Income ($)", value=0, step=5_000, help="Annual gross income after retirement while working part time", min_value = 0)
+    ss_income = st.number_input("Social Security Income ($)", value=30_000, step=2_500, help="Annual Social Security payout in base dollars. Check the [SSA Quick Calc](https://www.ssa.gov/OACT/quickcalc/) for an estimate.", min_value = 0)
 
     st.subheader("Contributions & Expenses")
-    pretax_contrib = st.number_input("Pre-tax Contribution ($)", value=15_000, step=1_000, help="Annual pre-tax 401(k) contribution")
-    roth_contrib = st.number_input("Roth Contribution ($)", value=7_000, step=500, help="Annual Roth IRA contribution")
-    employer_match = st.number_input("Employer Match ($)", value=5_000, step=500, help="Annual employer matching contribution")
-    contrib_annual_increase = st.number_input("Contrib Growth Multiplier", value=1.01, step=0.005, format="%.3f", help="Annual growth factor on contributions")
-    exp_working = st.number_input("Working Non-Housing Expenses ($)", value=50_000, step=2_500, help="Annual living expenses prior to retirement, not including housing")
-    exp_retired = st.number_input("Retired Non-Housing Expenses ($)", value=50_000, step=2_500, help="Annual living expenses during retirement, not including housing")
-    housing_rent = st.number_input("Rent Cost ($)", value=24_000, step=1_000, help="Annual rent when not owning a home")
+    pretax_contrib = st.number_input("Pre-tax Contribution ($)", value=15_000, step=1_000, help="Annual pre-tax 401(k) contribution", min_value = 0)
+    roth_contrib = st.number_input("Roth Contribution ($)", value=7_000, step=500, help="Annual Roth IRA contribution", min_value = 0)
+    employer_match = st.number_input("Employer Match ($)", value=5_000, step=500, help="Annual employer matching contribution", min_value = 0)
+    contrib_annual_increase =  1 + st.number_input("Contrib Growth Multiplier (%)", value=1.0, step=0.5, format="%.1f", help="Annual growth rate (%) on contributions", min_value = 0.0)/ 100
+    exp_working = st.number_input("Working Non-Housing Expenses ($)", value=50_000, step=2_500, help="Annual living expenses prior to retirement, not including housing", min_value = 0)
+    exp_retired = st.number_input("Retired Non-Housing Expenses ($)", value=50_000, step=2_500, help="Annual living expenses during retirement, not including housing", min_value = 0)
+    housing_rent = st.number_input("Rent Cost ($)", value=24_000, step=1_000, help="Annual rent if you don't own a home", min_value = 0)
 
     st.subheader("Taxes & Events")
-    state_tax = st.number_input("State Tax Rate", value=0.05, step=0.005, format="%.3f", help="Flat state income tax rate")
-    penalty = st.number_input("Early Withdrawal Penalty Rate", value=0.10, step=0.01, help="Penalty on early traditional/Roth withdrawals (10 pct is standard but you can model something else)")
+    state_tax = st.number_input("State Tax Rate (%)", value=5.0, step=0.5, format="%.3f", help="Flat state income tax rate (%)", min_value = 0.0)/ 100
+    penalty = st.number_input("Early Withdrawal Penalty Rate (%)", value=10.0, step=1.0, help="Penalty on early traditional/Roth withdrawals (10 pct is standard but you can model something else)", min_value = 0.0) / 100
     
     enable_events = st.checkbox("Enable Home Real Estate Events", value=True, help="Enable home sale and repurchase events")
     if enable_events:
-        home_sale_year = st.number_input("Home Sale Year", value=2030, step=1, help="Year current home is sold")
+        home_sale_year = st.number_input("Home Sale Year", value=2030, step=1, help="Year current home is sold", min_value = start_year)
         new_home_year = st.number_input("New Home Purchase Year", value=2035, step=1, help="Year new home is purchased")
-        new_home_cost = st.number_input("New Home Cost ($)", value=600_000, step=25_000, help="New home price estimate in current year dollars")
-        new_mortgage_rate = st.number_input("New Mortgage Rate", value=0.06, step=0.005, help="Interest rate for new mortgage")
-        new_mortgage_years = st.number_input("New Mortgage Term (Years)", value=30, step=1, help="Term of new mortgage")
+        new_home_cost = st.number_input("New Home Cost ($)", value=600_000, step=25_000, help="New home price estimate in current year dollars", min_value = 0)
+        new_mortgage_rate = st.number_input("New Mortgage Rate (%)", value=6.0, step=0.125, help="Interest rate (%) for new mortgage", min_value = 0.0)/ 100
+        new_mortgage_years = st.number_input("New Mortgage Term (Years)", value=30, step=1, help="Term of new mortgage", min_value=1, max_value=50)
     else:
         home_sale_year, new_home_year = None, None
         new_home_cost, new_mortgage_rate, new_mortgage_years = 600_000, 0.06, 30
 
+    num_sim = st.number_input("Number of Monte Carlo Simulations", value=250, step=50, min_value = 100, max_value = 1000, help="Number of MC simulations to run. More simulations takes more time but might lead to more variance in results.")
+    st.caption('Once this button is pressed, it will take a few seconds to produce outputs while simulations '
+        'under different market conditions are run. Please be patient! You can change the number of simulations above.')
     run_button = st.button("Run Simulation", type="primary", use_container_width=True)
-    st.caption('Once this button is pressed, it will take a few seconds to produce outputs while 500 different simulations '
-        'under different market conditions are run. Please be patient!')
 
 if run_button:
     try:
@@ -493,7 +494,7 @@ if run_button:
         )
 
         runs = []
-        for i in range(500):
+        for i in range(num_sim):
             res_df, _ = sim.run()
             df = pd.DataFrame(res_df)
             df["end_portfolio_value"] = df["end_brokerage"] + df["end_traditional"] + df["end_roth"]
