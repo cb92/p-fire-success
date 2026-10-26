@@ -290,8 +290,16 @@ class SimulationRun:
     new_mortgage_years: int = 30
 
     def __post_init__(self):
-        if self.home_sale_year and self.new_home_year:
-            assert self.new_home_year > self.home_sale_year, "New home purchase year must be after home sale year."
+        sells, buys = self.home_sale_year is not None, self.new_home_year is not None
+        if sells:
+            assert self.home is not None or buys, "A home sale needs a current home or a planned home purchase."
+        if buys and self.home is not None:
+            assert sells, "You currently own a home, so a purchase can only happen after selling it. Schedule the sale first."
+        if sells and buys:
+            if self.home is not None:    # sell current home, then buy
+                assert self.new_home_year > self.home_sale_year, "New home purchase year must be after the sale of your current home."
+            else:                        # buy, then later sell that home
+                assert self.home_sale_year > self.new_home_year, "Home sale year must be after the purchase year (you are selling the home you buy)."
         assert self.age_retire >= self.age_start, "Retirement age cannot be prior to start age."
         assert self.age_end >= self.age_retire, "End age cannot be prior to retirement age."
 
@@ -458,16 +466,36 @@ with st.sidebar:
     st.subheader("Taxes & Events")
     state_tax = st.number_input("State Tax Rate (%)", value=5.0, step=0.5, format="%.3f", help="Flat state income tax rate (%)", min_value = 0.0)/ 100
     penalty = st.number_input("Early Withdrawal Penalty Rate (%)", value=10.0, step=1.0, help="Penalty on early traditional/Roth withdrawals (10 pct is standard but you can model something else)", min_value = 0.0) / 100
-    
-    enable_events = st.checkbox("Enable Home Real Estate Events", value=True, help="Enable home sale and repurchase events")
-    if enable_events:
-        home_sale_year = st.number_input("Home Sale Year", value=2030, step=1, help="Year current home is sold", min_value = start_year)
+
+    # Sale and purchase are toggled independently. A sale needs a home to sell: one owned now, or one bought
+    # earlier in the plan. A purchase only happens in a year when no home is owned (renting now, or sold earlier).
+    buy_planned = st.session_state.get("buy_home", True)    # buy toggle is rendered below; read its last value
+
+    if has_home or buy_planned:
+        sell_home = st.checkbox("Plan a Home Sale", value=True,
+                                help="Sell your current home" if has_home else "Sell the home you buy in this plan")
+    else:
+        sell_home = False
+        st.caption("A home sale requires owning a home now or planning to buy one.")
+    if sell_home:
+        sale_help = (("Year your current home is sold" + (" (must be before the new home purchase year)." if buy_planned else "."))
+                     if has_home else "Year the home you buy is sold (must be after the purchase year).")
+        home_sale_year = st.number_input("Home Sale Year", value=2030 if has_home else 2045, step=1, help=sale_help, min_value = start_year)
+    else:
+        home_sale_year = None
+ 
+    buy_home = st.checkbox("Plan a Home Purchase", value=True, key="buy_home",
+                           help="Buy a new home with a mortgage. Only happens in a year when you don't own a home: "
+                                "you rent now, or sold earlier.")
+    if buy_home:
+        if has_home and not sell_home:
+            st.warning("You currently own a home, so a purchase can only happen after selling it. Turn on 'Plan a Home Sale'.")
         new_home_year = st.number_input("New Home Purchase Year", value=2035, step=1, help="Year new home is purchased")
         new_home_cost = st.number_input("New Home Cost ($)", value=600_000, step=25_000, help="New home price estimate in current year dollars", min_value = 0)
         new_mortgage_rate = st.number_input("New Mortgage Rate (%)", value=6.0, step=0.125, help="Interest rate (%) for new mortgage", min_value = 0.0)/ 100
         new_mortgage_years = st.number_input("New Mortgage Term (Years)", value=30, step=1, help="Term of new mortgage", min_value=1, max_value=50)
     else:
-        home_sale_year, new_home_year = None, None
+        new_home_year = None
         new_home_cost, new_mortgage_rate, new_mortgage_years = 600_000, 0.06, 30
 
     num_sim = st.number_input("Number of Monte Carlo Simulations", value=250, step=50, min_value = 100, max_value = 1000, help="Number of MC simulations to run. More simulations takes more time but might lead to more variance in results.")
