@@ -501,7 +501,7 @@ with st.sidebar:
     num_sim = st.number_input("Number of Monte Carlo Simulations", value=250, step=50, min_value = 100, max_value = 1000, help="Number of MC simulations to run. More simulations takes more time but might lead to more variance in results.")
     st.caption('Once this button is pressed, it will take a few seconds to produce outputs while simulations '
         'under different market conditions are run. Please be patient! You can change the number of simulations above.')
-    run_button = st.button("Run Simulation", type="primary", use_container_width=True)
+    run_button = st.button("Run Simulation", type="primary", width='stretch')
 
 if run_button:
     try:
@@ -576,7 +576,7 @@ if st.session_state.results_df is not None:
         )
 
         st.subheader(f"Simulated Portfolio End Value Over Time ({'Today’s Dollars' if is_todays_dollars else 'Real Dollars'})")
-        st.altair_chart(chart, use_container_width=True)
+        st.altair_chart(chart, width='stretch')
 
         # 2. Failure analysis & Success Rate
         failure_years = []
@@ -687,7 +687,7 @@ if st.session_state.results_df is not None:
 
             st.markdown(f"#### {title_text}")
             st.caption(desc_text)
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, width='stretch')
 
         render_component_chart("net_worth")
 
